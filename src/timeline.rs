@@ -55,6 +55,7 @@ pub enum NodePositionQuery {
 	AfterBounds(AnimationNode),
 }
 
+#[derive(Clone)]
 pub struct Timeline(pub Vec<AnimationNode>);
 
 impl Timeline {
@@ -130,21 +131,40 @@ impl Timeline {
 		use NodePositionQuery::*;
 		let query = self.nearest(x);
 		// strange beizer magic
-		// https://www.icode.com/c-function-for-a-bezier-curve/
+		// http://greweb.me/2012/02/bezier-curve-based-easing-functions-from-concept-to-implementation/
 		fn beizer(t: f32, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> f32 {
-			let cx = 3.0 * (p1.x() - p0.x());
-			let cy = 3.0 * (p1.y() - p0.y());
-			let bx = 3.0 * (p2.x() - p1.x()) - cx;
-			let by = 3.0 * (p2.y() - p1.y()) - cy;
-			let ax = p3.x() - p0.x() - cx - bx;
-			let ay = p3.y() - p0.y() - cy - by;
+			let range_x = p3.x() - p0.x();
+			let range_y = p3.y() - p0.y();
 
-			let cube = t * t * t;
-			let square = t * t;
-			let res_x = (ax * cube) + (bx * square) + (cx * t) + p0.x();
-			let res_y = (ay * cube) + (by * square) + (cy * t) + p0.y();
+			fn a(a_a1: f32, a_a2: f32) -> f32 {
+				1.0 - 3.0 * a_a2 + 3.0 * a_a1
+			}
+			fn b(a_a1: f32, a_a2: f32) -> f32 {
+				3.0 * a_a2 - 6.0 * a_a1
+			}
+			fn c(a_a1: f32) -> f32 {
+				3.0 * a_a1
+			}
 
-			res_y
+			fn calc_beizer(a_t: f32, a_a1: f32, a_a2: f32) -> f32 {
+				((a(a_a1, a_a2) * a_t + b(a_a1, a_a2)) * a_t + c(a_a1)) * a_t
+			}
+
+			fn get_slope(a_t: f32, a_a1: f32, a_a2: f32) -> f32 {
+				3.0 * a(a_a1, a_a2) * a_t * a_t + 2.0 * b(a_a1, a_a2) * a_t + c(a_a1)
+			}
+
+			let mut a_guess_t = t;
+			for _ in 0..4 {
+				let current_slope = get_slope(a_guess_t, p1.x(), p2.x());
+				if current_slope == 0.0 {
+					return a_guess_t;
+				}
+				let current_x = calc_beizer(a_guess_t, p1.x(), p2.x()) - t;
+				a_guess_t -= current_x / current_slope;
+			}
+
+			a_guess_t * range_y + p0.y()
 		}
 
 		match query {
@@ -158,7 +178,9 @@ impl Timeline {
 				} else {
 					match (a.handle.handle_right(), b.handle.handle_left()) {
 						(None, None) => 0.0,
-						(Some(left), Some(right)) => 0.0,
+						(Some(left), Some(right)) => {
+							beizer(x, a.pos, left + a.pos, right + b.pos, b.pos)
+						}
 						(None, Some(right)) => 0.0,
 						(Some(left), None) => 0.0,
 					}
@@ -185,5 +207,9 @@ impl Timeline {
 
 	pub fn right_bound(&self) -> f32 {
 		self.last().pos.x()
+	}
+
+	pub fn width(&self) -> f32 {
+		self.right_bound() - self.left_bound()
 	}
 }
